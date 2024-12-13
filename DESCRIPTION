@@ -1,0 +1,22 @@
+Package: LIV
+Type: Package
+Version: 0.1.0
+Title: Tools for Local Instrumental Variables (LIV) Analysis
+Description: Provides functions to perform Local Instrumental Variables analysis with continuous instruments, including residualization, data filtering, LIV computation, bootstrapping, and diagnostic plotting.
+Authors@R: person(given = "Marta", family = "Bernardi", email = "marta.bernardi@tu-dresden.de", role = c("aut", "cre"))
+License: MIT + file LICENSE
+Imports:
+    dplyr,
+    fixest,
+    purrr,
+    np,
+    boot,
+    ggplot2,
+    future,
+    furrr
+LazyData: true
+RoxygenNote: 7.2.3
+Encoding: UTF-8
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3

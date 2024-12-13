@@ -1,0 +1,185 @@
+---
+title: "LIVExample"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{LIVExample}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+
+```
+
+```{r setup}
+library(LIV)
+library(AER)
+library(LIV)
+library(dplyr)
+library(ggplot2)
+library(purrr)
+library(fixest)
+library(np)
+library(boot)
+
+```
+
+
+# Load the Mroz dataset
+```{r data}
+data("Mroz", package = "AER")
+```
+
+
+# Prepare the data
+
+```{r prep}
+# Select relevant variables
+mroz_data <- Mroz %>%
+  select(hours, wage, kids, age, educ, married, region)
+
+# Remove rows with missing values
+mroz_data <- mroz_data %>% drop_na()
+
+```
+
+
+
+# Residualize D and Z
+```{r rdz}
+mroz_resid <- residualize_D_Z(data = mroz_data)
+
+```
+
+
+# Residualize Y (hours)
+```{r rdy}
+res_out <- residualize_outcome(data = mroz_resid, outcome_var = "hours")
+mroz_resid <- res_out$data
+model_Y <- res_out$model_Y
+```
+
+
+# Stable region 
+
+```{r stable}
+# Filter for stable region
+mroz_filtered <- filter_stable_region(data = mroz_resid, epsilon = 1e-3)
+```
+
+# Define instrument grid
+
+```{r grid}
+Z_min <- quantile(mroz_filtered$Z_resid, 0.05, na.rm = TRUE)
+Z_max <- quantile(mroz_filtered$Z_resid, 0.95, na.rm = TRUE)
+instrument_grid <- seq(Z_min, Z_max, length.out = 50)
+```
+
+
+# Compute LIV estimates
+```{r esti}
+LIV_estimates <- compute_LIV_curve(data = mroz_filtered, instrument_grid = instrument_grid, bw = 0.05, kernel = "epanechnikov")
+```
+
+
+# Define bootstrap function
+```{r boot}
+
+compute_LIV_boot <- function(data, indices) {
+  # Resample the data
+  d_boot <- data[indices, ]
+  d_boot <- d_boot %>% filter(abs(D_resid) > 1e-3)
+  
+  # Compute LIV estimates
+  LIV_boot_estimates <- compute_LIV_curve(data = d_boot, instrument_grid = instrument_grid, bw = 0.05, kernel = "epanechnikov")
+  
+  return(LIV_boot_estimates)
+}
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Perform bootstrapping
+boot_result <- boot(data = mroz_filtered, statistic = compute_LIV_boot, R = 1000)
+
+# Check for NAs
+na_counts <- apply(boot_result$t, 2, function(x) sum(is.na(x)))
+print(na_counts)
+```
+
+
+
+# Compute confidence intervals
+
+```{r ci}
+ci_list <- map_dfr(seq_along(instrument_grid), function(i) {
+  boot_estimates <- boot_result$t[, i]
+  boot_estimates <- boot_estimates[!is.na(boot_estimates)]
+  if (length(boot_estimates) > 0) {
+    ci <- quantile(boot_estimates, probs = c(0.025, 0.975), na.rm = TRUE)
+    tibble(
+      Z_resid = instrument_grid[i],
+      ci_lower = ci[1],
+      ci_upper = ci[2]
+    )
+  } else {
+    tibble(Z_resid = instrument_grid[i], ci_lower = NA_real_, ci_upper = NA_real_)
+  }
+})
+
+```
+
+
+```{r plot}
+
+# Merge LIV estimates with confidence intervals
+plot_data <- tibble(
+  Z_resid = instrument_grid,
+  LIV = LIV_estimates
+) %>%
+  left_join(ci_list, by = "Z_resid")
+
+# Plot LIV with confidence intervals
+p <- ggplot(plot_data, aes(x = Z_resid, y = LIV)) +
+  geom_line(color = "blue") +
+  geom_ribbon(aes(ymin = ci_lower, ymax = ci_upper), alpha = 0.2, fill = "lightblue") +
+  labs(
+    title = "Local Instrumental Variables (LIV) Curve for Hours Worked",
+    x = "Residualized Instrument (Z_resid)",
+    y = "LIV Estimate"
+  ) +
+  theme_minimal()
+
+print(p)
+```
+
+
+
+# Correlation between D_resid and Z_resid
+
+```{r corr}
+correlation <- cor(mroz_filtered$D_resid, mroz_filtered$Z_resid, use = "complete.obs")
+cat("Correlation between D_resid and Z_resid:", correlation, "\n")
+
+# Diagnostic Correlation Plot
+
+
+diagnostic_plot <- ggplot(mroz_filtered, aes(x = Z_resid, y = D_resid)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", color = "red") +
+  labs(
+    title = "Correlation Between Residualized D and Z",
+    x = "Residualized Instrument (Z_resid)",
+    y = "Residualized Treatment (D_resid)"
+  ) +
+  theme_minimal()
+
+print(diagnostic_plot)
+```
+
+
+
